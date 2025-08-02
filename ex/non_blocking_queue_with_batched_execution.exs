@@ -87,6 +87,9 @@ tasks =
   end)
 
 tasks
-|> Enum.map(fn t -> NonBlockingQueueWithBatchedExecution.enqueue(queue, t) end)
+|> Task.async_stream(fn t ->
+  NonBlockingQueueWithBatchedExecution.enqueue(queue, t)
+end)
+|> Enum.to_list()
 
 Queue.report(queue)
