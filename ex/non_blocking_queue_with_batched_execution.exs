@@ -65,12 +65,13 @@ defmodule NonBlockingQueueWithBatchedExecution do
     queue
   end
 
-  defp run_tasks(tasks) do
-    tasks
-    |> Enum.map(fn task -> {task.id, Req.get!(task.url)} end)
+  defp run_tasks(queue_tasks) do
+    queue_tasks
+    |> Task.async_stream(fn queue_task -> {queue_task.id, Req.get!(queue_task.url)} end)
     |> Enum.map(fn
-      {task_id, %{status: 200}} -> %{task_id: task_id, succeeded: true}
-      {task_id, _} -> %{task_id: task_id, succeeded: false}
+      {:ok, {queue_task_id, %{status: 200}}} -> %{task_id: queue_task_id, succeeded: true}
+      {:ok, {queue_task_id, _}} -> %{task_id: queue_task_id, succeeded: false}
+      {:error, error} -> raise "Unknown error running task: #{error}"
     end)
   end
 end
