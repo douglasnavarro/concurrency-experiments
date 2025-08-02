@@ -3,16 +3,18 @@
 Mix.install([:req])
 
 defmodule Queue do
-  defstruct [:threshold, :pending_tasks, :failed_tasks]
+  defstruct [:threshold, :pending_tasks, :failed_tasks, :processing]
 
   def new(threshold \\ 5) do
     {:ok, pending_tasks_agent} = Agent.start_link(fn -> [] end, name: PendingTasks)
     {:ok, failed_tasks_agent} = Agent.start_link(fn -> [] end, name: FailedTasks)
+    {:ok, processing_agent} = Agent.start_link(fn -> false end, name: Processing)
 
     %__MODULE__{
       threshold: threshold,
       pending_tasks: pending_tasks_agent,
-      failed_tasks: failed_tasks_agent
+      failed_tasks: failed_tasks_agent,
+      processing: processing_agent
     }
   end
 
@@ -21,6 +23,7 @@ defmodule Queue do
     |> Map.from_struct()
     |> Map.put(:pending_tasks, Agent.get(queue.pending_tasks, & &1))
     |> Map.put(:failed_tasks, Agent.get(queue.failed_tasks, & &1))
+    |> Map.put(:processing, Agent.get(queue.processing, & &1))
     |> IO.inspect(label: :queue)
 
     :ok
@@ -38,31 +41,58 @@ defmodule NonBlockingQueueWithBatchedExecution do
   end
 
   def enqueue(%Queue{} = queue, %QueueTask{} = task) do
-    with :ok <- Agent.update(queue.pending_tasks, fn tasks -> tasks ++ [task] end) do
-      IO.inspect(task, label: :enqueued_task)
+    # Add task to pending list atomically
+    Agent.update(queue.pending_tasks, fn tasks -> tasks ++ [task] end)
 
-      case Agent.get(queue.pending_tasks, & &1) do
-        tasks when length(tasks) >= queue.threshold ->
-          IO.inspect(Enum.map(tasks, & &1.id), label: :flushing_queue)
+    IO.inspect(task, label: :enqueued_task)
 
-          results = run_tasks(tasks)
-
-          Agent.update(queue.pending_tasks, fn _ -> [] end)
-
-          Agent.update(queue.failed_tasks, fn failed_tasks ->
-            failed_tasks ++ Enum.filter(results, &(!&1.succeeded))
-          end)
-
-        _tasks ->
-          :ok
-      end
-    else
-      error ->
-        IO.puts("Unable to enqueue task, error: #{error}")
-        :error
-    end
+    # Check if we should process the batch
+    maybe_process_batch(queue)
 
     queue
+  end
+
+  defp maybe_process_batch(%Queue{} = queue) do
+    # Use Agent.get_and_update to atomically check and potentially set processing flag
+    Agent.get_and_update(queue.processing, fn is_processing ->
+      if is_processing do
+        # Already processing, don't start another
+        {false, true}
+      else
+        # Check if we have enough tasks to process
+        pending_tasks = Agent.get(queue.pending_tasks, & &1)
+
+        if length(pending_tasks) >= queue.threshold do
+          # Start processing in background
+          Task.start(fn -> process_batch(queue) end)
+          # Set processing flag
+          {true, true}
+        else
+          # Not processing
+          {false, false}
+        end
+      end
+    end)
+  end
+
+  defp process_batch(%Queue{} = queue) do
+    # Get all pending tasks and clear the list atomically
+    tasks = Agent.get_and_update(queue.pending_tasks, fn tasks -> {tasks, []} end)
+
+    IO.inspect(Enum.map(tasks, & &1.id), label: :flushing_queue)
+
+    results = run_tasks(tasks)
+
+    # Update failed tasks
+    Agent.update(queue.failed_tasks, fn failed_tasks ->
+      failed_tasks ++ Enum.filter(results, &(!&1.succeeded))
+    end)
+
+    # Reset processing flag
+    Agent.update(queue.processing, fn _ -> false end)
+
+    # Check if more tasks accumulated while processing
+    maybe_process_batch(queue)
   end
 
   defp run_tasks(queue_tasks) do
@@ -92,4 +122,5 @@ tasks
 end)
 |> Enum.to_list()
 
+:timer.sleep(5_000)
 Queue.report(queue)
