@@ -26,6 +26,11 @@ class NonBlockingQueueWithBatchedExecution:
     ) -> NonBlockingQueueWithBatchedExecution:
         self.threshold = threshold
         self.concurrent_batch_size = concurrent_batch_size
+
+        # While this works initially, this implies O(n) complexity whenever
+        # updating pending or failed tasks.
+        # If we make these be Dict keyed by task_id, we take updates down to
+        # O(1) as long as we mutate and don't re-instantiate the dicts every time.
         self.tasks: List[Task] = []
         self.failed_tasks: List[Task] = []
 
