@@ -21,6 +21,9 @@ defmodule QueueServer do
     end)
   end
 
+  # A BEAM process will always process a single message at a time in the
+  # same order in which they've arrived.
+  # This is a core concept to rely on when using processes in Elixir.
   defp loop(state) do
     receive do
       {:enqueue, task, caller_pid} ->
