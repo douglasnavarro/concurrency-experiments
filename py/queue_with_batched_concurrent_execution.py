@@ -28,7 +28,7 @@ class QueueWithBatchedConcurrentExecution:
         self.concurrent = concurrent
 
         if concurrent:
-            self.threadPool = ThreadPoolExecutor(5)
+            self.threadPool = ThreadPoolExecutor(self.threshold)
         else:
             self.threadPool = None
 
